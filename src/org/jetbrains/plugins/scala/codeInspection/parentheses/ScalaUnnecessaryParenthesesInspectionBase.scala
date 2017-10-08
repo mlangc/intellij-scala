@@ -11,6 +11,8 @@ import org.jetbrains.plugins.scala.codeInsight.intention.IntentionUtil
 import org.jetbrains.plugins.scala.codeInspection.{AbstractFixOnPsiElement, AbstractInspection, InspectionBundle}
 import org.jetbrains.plugins.scala.lang.psi.ScalaPsiUtil
 import org.jetbrains.plugins.scala.lang.psi.api.expr._
+import org.jetbrains.plugins.scala.lang.psi.api.statements.{ScFunction, ScFunctionDeclaration, ScFunctionDefinition}
+import org.jetbrains.plugins.scala.lang.psi.api.statements.params.ScParameterClause
 import org.jetbrains.plugins.scala.lang.psi.impl.ScalaPsiElementFactory.createExpressionFromText
 import org.jetbrains.plugins.scala.lang.refactoring.util.ScalaRefactoringUtil.getShortText
 import org.jetbrains.plugins.scala.util.IntentionAvailabilityChecker
@@ -29,6 +31,17 @@ abstract class ScalaUnnecessaryParenthesesInspectionBase extends AbstractInspect
         UnnecessaryParenthesesUtil.canBeStripped(parenthesized, getIgnoreClarifying) =>
       holder.registerProblem(parenthesized, "Unnecessary parentheses", ProblemHighlightType.GENERIC_ERROR_OR_WARNING,
         new UnnecessaryParenthesesQuickFix(parenthesized, UnnecessaryParenthesesUtil.getTextOfStripped(parenthesized, getIgnoreClarifying)))
+
+    case paramClause: ScParameterClause if hasUnnecessairyParen(paramClause) =>
+      holder.registerProblem(paramClause, "Unnecessary parentheses", ProblemHighlightType.GENERIC_ERROR_OR_WARNING, new UnneccessaryParenParamQuickFix(paramClause))
+  }
+
+  private def hasUnnecessairyParen(paramClause: ScParameterClause): Boolean = {
+    paramClause.parameters.size == 1 &&
+      paramClause.getFirstChild.getText == "(" &&
+      paramClause.getLastChild.getText == ")" &&
+      !paramClause.parameters.head.isInstanceOf[ScUnderscoreSection] &&
+      !(paramClause.getParent != null && paramClause.getParent.getParent.isInstanceOf[ScFunction])
   }
 
   override def createOptionsPanel(): JComponent = {
@@ -37,6 +50,18 @@ abstract class ScalaUnnecessaryParenthesesInspectionBase extends AbstractInspect
 
   def getIgnoreClarifying: Boolean
   def setIgnoreClarifying(value: Boolean)
+}
+
+class UnneccessaryParenParamQuickFix(parenthesized: ScParameterClause)
+  extends AbstractFixOnPsiElement("Remove unnecessary parentheses " + getShortText(parenthesized), parenthesized){
+
+  def doApplyFix(project: Project): Unit = {
+    val paramClause = getElement
+    if (!paramClause.isValid) return
+
+    paramClause.getFirstChild.delete()
+    paramClause.getLastChild.delete()
+  }
 }
 
 class UnnecessaryParenthesesQuickFix(parenthesized: ScParenthesisedExpr, textOfStripped: String)
@@ -49,7 +74,7 @@ class UnnecessaryParenthesesQuickFix(parenthesized: ScParenthesisedExpr, textOfS
     val newExpr = createExpressionFromText(textOfStripped)(parenthExpr.getManager)
     val replaced = parenthExpr.replaceExpression(newExpr, removeParenthesis = true)
 
-    val comments = Option(parenthExpr.expr.get).map(expr => IntentionUtil.collectComments(expr))
+    val comments = parenthExpr.expr.map(expr => IntentionUtil.collectComments(expr))
     comments.foreach(value => IntentionUtil.addComments(value, replaced.getParent, replaced))
 
     ScalaPsiUtil.padWithWhitespaces(replaced)
